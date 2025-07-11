@@ -8,44 +8,43 @@ require('dotenv').config(); // Add this to load .env variables
 const app = express();
 const PORT = 4000;
 
-const GEMINI_API_KEY = 'AIzaSyCwthceSueD_3jtEDkQWLrVHuYBUMaDc8k';
-const GEMINI_MODEL = 'gemini-2.5-flash';
+
 // Add this middleware to handle CORS
 // MongoDB Connection using environment variable
 mongoose.connect(process.env.MONGODB_URI, {
 
-    useUnifiedTopology: true
+  useUnifiedTopology: true
 })
-    .then(() => console.log('MongoDB connected'))
-    .catch(err => console.error('MongoDB connection error:', err));
+  .then(() => console.log('MongoDB connected'))
+  .catch(err => console.error('MongoDB connection error:', err));
 // Analysis Report Schema
 const analysisReportSchema = new mongoose.Schema({
-    productTitle: { type: String, required: true },
-    targetCountry: { type: String, required: true },
-    keywords: { type: [String], required: true },
-    imageUrl: { type: String },
-    adsData: [{
-        advertiser: String,
-        adPreviewText: String,
-        videoSrc: String,
-        poster: String,
-        image: String
-    }],
-    aiAnalysis: {
-        aiSummaryVerdict: String,
-        influencerSaturation: Object,
-        costEstimates: Object,
-        productTrendInsights: Object,
-        searchDemand: Object,
-        marketSaturation: Object,
-        audienceProfile: Object,
-        pricePositioning: Object,
-        platformStrategies: Object,
-        researchKeywordsGuide: Object,
-        actionPlan: Object,
-        finalVerdict: Object
-    },
-    createdAt: { type: Date, default: Date.now }
+  productTitle: { type: String, required: true },
+  targetCountry: { type: String, required: true },
+  keywords: { type: [String], required: true },
+  imageUrl: { type: String },
+  adsData: [{
+    advertiser: String,
+    adPreviewText: String,
+    videoSrc: String,
+    poster: String,
+    image: String
+  }],
+  aiAnalysis: {
+    aiSummaryVerdict: String,
+    influencerSaturation: Object,
+    costEstimates: Object,
+    productTrendInsights: Object,
+    searchDemand: Object,
+    marketSaturation: Object,
+    audienceProfile: Object,
+    pricePositioning: Object,
+    platformStrategies: Object,
+    researchKeywordsGuide: Object,
+    actionPlan: Object,
+    finalVerdict: Object
+  },
+  createdAt: { type: Date, default: Date.now }
 });
 
 const AnalysisReport = mongoose.model('AnalysisReport', analysisReportSchema);
@@ -55,7 +54,7 @@ app.use(cors());
 /** --- UTILITY FUNCTIONS --- **/
 
 function buildPrompt({ productTitle, targetCountry, keywords, imageUrl }) {
-    return `
+  return `
 You are an expert e-commerce consultant with deep knowledge of digital marketing. Analyze the viability of launching "${productTitle}" specifically in ${targetCountry}, focusing on market opportunity and profitability.
 
 PRODUCT DETAILS:
@@ -252,189 +251,189 @@ REQUIREMENTS:
 }
 
 async function callGemini({ prompt }) {
-    try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
-        const contents = [{ parts: [{ text: prompt }] }];
-        const response = await axios.post(url, { contents });
-        return response.data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
-    } catch (err) {
-        console.error('❌ Gemini API error:', err.response?.data || err.message);
-        return null;
-    }
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${process.env.GEMINI_MODEL}:generateContent?key=${process.env.GEMINI_API_KEY}`;
+    const contents = [{ parts: [{ text: prompt }] }];
+    const response = await axios.post(url, { contents });
+    return response.data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
+  } catch (err) {
+    console.error('❌ Gemini API error:', err.response?.data || err.message);
+    return null;
+  }
 }
 
 async function scrapeFacebookAds(keyword, country) {
-    const browser = await puppeteer.launch({
-        headless: true,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-blink-features=AutomationControlled',
-        ],
-    });
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-blink-features=AutomationControlled',
+    ],
+  });
 
-    const page = await browser.newPage();
-    await page.setUserAgent(
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36'
-    );
+  const page = await browser.newPage();
+  await page.setUserAgent(
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36'
+  );
 
-    await page.evaluateOnNewDocument(() => {
-        Object.defineProperty(navigator, 'webdriver', { get: () => false });
-    });
+  await page.evaluateOnNewDocument(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => false });
+  });
 
-    const url = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=${country}&q=${encodeURIComponent(keyword)}&sort_data[direction]=desc&sort_data[mode]=relevancy_monthly_grouped`;
+  const url = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=${country}&q=${encodeURIComponent(keyword)}&sort_data[direction]=desc&sort_data[mode]=relevancy_monthly_grouped`;
 
-    try {
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  try {
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-        const cookieBtn = await page.$('button[data-cookiebanner="accept_button"]');
-        if (cookieBtn) {
-            await cookieBtn.click();
-            await page.waitForTimeout(2000);
-        }
-
-        await page.waitForSelector('.x1plvlek.xryxfnj.x1gzqxud.x178xt8z.x1lun4ml', { timeout: 30000 });
-
-        const ads = await page.evaluate(() => {
-            const cards = Array.from(document.querySelectorAll('.x1plvlek.xryxfnj.x1gzqxud.x178xt8z.x1lun4ml'));
-            return cards.slice(0, 10).map(card => {
-                const advertiser = card.querySelector('.x8t9es0.x1fvot60.xxio538.x108nfp6.xq9mrsl.x1h4wwuj.x117nqv4.xeuugli')?.innerText || "Unknown";
-                let adPreviewText = card.querySelector('.x8t9es0.xw23nyj.xo1l8bm.x63nzvj.x108nfp6.xq9mrsl.x1h4wwuj.xeuugli span')?.innerText || null;
-
-                const video = card.querySelector('video');
-                const image = card.querySelector('img')?.src || null;
-                return {
-                    advertiser,
-                    adPreviewText,
-                    videoSrc: video?.src,
-                    poster: video?.poster,
-                    image
-                };
-            });
-        });
-
-        await browser.close();
-        return ads;
-    } catch (err) {
-        await browser.close();
-        console.error('❌ Puppeteer error:', err);
-        return [];
+    const cookieBtn = await page.$('button[data-cookiebanner="accept_button"]');
+    if (cookieBtn) {
+      await cookieBtn.click();
+      await page.waitForTimeout(2000);
     }
+
+    await page.waitForSelector('.x1plvlek.xryxfnj.x1gzqxud.x178xt8z.x1lun4ml', { timeout: 30000 });
+
+    const ads = await page.evaluate(() => {
+      const cards = Array.from(document.querySelectorAll('.x1plvlek.xryxfnj.x1gzqxud.x178xt8z.x1lun4ml'));
+      return cards.slice(0, 10).map(card => {
+        const advertiser = card.querySelector('.x8t9es0.x1fvot60.xxio538.x108nfp6.xq9mrsl.x1h4wwuj.x117nqv4.xeuugli')?.innerText || "Unknown";
+        let adPreviewText = card.querySelector('.x8t9es0.xw23nyj.xo1l8bm.x63nzvj.x108nfp6.xq9mrsl.x1h4wwuj.xeuugli span')?.innerText || null;
+
+        const video = card.querySelector('video');
+        const image = card.querySelector('img')?.src || null;
+        return {
+          advertiser,
+          adPreviewText,
+          videoSrc: video?.src,
+          poster: video?.poster,
+          image
+        };
+      });
+    });
+
+    await browser.close();
+    return ads;
+  } catch (err) {
+    await browser.close();
+    console.error('❌ Puppeteer error:', err);
+    return [];
+  }
 }
 
 /** --- MAIN ROUTE --- **/
 
 // API Routes
 app.post('/api/analyze', async (req, res) => {
-    const { productTitle, targetCountry, keywords, imageUrl } = req.body;
+  const { productTitle, targetCountry, keywords, imageUrl } = req.body;
 
-    if (!productTitle || !targetCountry || !keywords) {
-        return res.status(400).json({ error: 'Missing required fields' });
-    }
+  if (!productTitle || !targetCountry || !keywords) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
 
-    try {
-        // Your existing analysis logic here
-        const prompt = buildPrompt({ productTitle, targetCountry, keywords, imageUrl });
-        const aiResponse = await callGemini({ prompt });
-        const jsonMatch = aiResponse?.match(/\{[\s\S]*\}/);
-        const parsedAI = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
-        const adResults = await scrapeFacebookAds(productTitle, targetCountry);
+  try {
+    // Your existing analysis logic here
+    const prompt = buildPrompt({ productTitle, targetCountry, keywords, imageUrl });
+    const aiResponse = await callGemini({ prompt });
+    const jsonMatch = aiResponse?.match(/\{[\s\S]*\}/);
+    const parsedAI = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+    const adResults = await scrapeFacebookAds(productTitle, targetCountry);
 
-        // Save to MongoDB
-        const newReport = new AnalysisReport({
-            productTitle,
-            targetCountry,
-            keywords: Array.isArray(keywords) ? keywords : keywords.split(',').map(k => k.trim()).filter(Boolean),
-            imageUrl,
-            adsData: adResults,
-            aiAnalysis: parsedAI
-        });
+    // Save to MongoDB
+    const newReport = new AnalysisReport({
+      productTitle,
+      targetCountry,
+      keywords: Array.isArray(keywords) ? keywords : keywords.split(',').map(k => k.trim()).filter(Boolean),
+      imageUrl,
+      adsData: adResults,
+      aiAnalysis: parsedAI
+    });
 
-        const savedReport = await newReport.save();
+    const savedReport = await newReport.save();
 
-        return res.json({
-            id: savedReport._id,
-            input: { productTitle, targetCountry, keywords, imageUrl },
-            adsData: adResults,
-            aiAnalysis: parsedAI
-        });
-    } catch (err) {
-        console.error('Analysis error:', err);
-        res.status(500).json({ error: 'Internal server error' });
-    }
+    return res.json({
+      id: savedReport._id,
+      input: { productTitle, targetCountry, keywords, imageUrl },
+      adsData: adResults,
+      aiAnalysis: parsedAI
+    });
+  } catch (err) {
+    console.error('Analysis error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 app.get('/api/history', async (req, res) => {
-    try {
-        const reports = await AnalysisReport.find()
-            .sort({ createdAt: -1 })
-            .limit(10)
-            .lean();
+  try {
+    const reports = await AnalysisReport.find()
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .lean();
 
-        const formattedReports = reports.map(report => ({
-            id: report._id,
-            product: report.productTitle,
-            country: report.targetCountry,
-            date: report.createdAt.toISOString().split('T')[0],
-            status: report.aiAnalysis.finalVerdict.launchDecision,
-            confidence: report.aiAnalysis.finalVerdict.confidenceLevel
-        }));
+    const formattedReports = reports.map(report => ({
+      id: report._id,
+      product: report.productTitle,
+      country: report.targetCountry,
+      date: report.createdAt.toISOString().split('T')[0],
+      status: report.aiAnalysis.finalVerdict.launchDecision,
+      confidence: report.aiAnalysis.finalVerdict.confidenceLevel
+    }));
 
-        res.json(formattedReports);
-    } catch (err) {
-        console.error('History fetch error:', err);
-        res.status(500).json({ error: 'Failed to fetch history' });
-    }
+    res.json(formattedReports);
+  } catch (err) {
+    console.error('History fetch error:', err);
+    res.status(500).json({ error: 'Failed to fetch history' });
+  }
 });
 
 app.get('/api/history/:id', async (req, res) => {
-    try {
-        const report = await AnalysisReport.findById(req.params.id).lean();
+  try {
+    const report = await AnalysisReport.findById(req.params.id).lean();
 
-        if (!report) {
-            return res.status(404).json({ error: 'Report not found' });
-        }
-
-        res.json({
-            ...report,
-            id: report._id,
-            productName: report.productTitle,
-            date: report.createdAt.toISOString().split('T')[0]
-        });
-    } catch (err) {
-        console.error('Report fetch error:', err);
-        res.status(500).json({ error: 'Failed to fetch report' });
+    if (!report) {
+      return res.status(404).json({ error: 'Report not found' });
     }
+
+    res.json({
+      ...report,
+      id: report._id,
+      productName: report.productTitle,
+      date: report.createdAt.toISOString().split('T')[0]
+    });
+  } catch (err) {
+    console.error('Report fetch error:', err);
+    res.status(500).json({ error: 'Failed to fetch report' });
+  }
 });
 // Add this to your server.js file
 app.get('/api/dashboard-metrics', async (req, res) => {
-    try {
-        // Get total products analyzed
-        const totalProducts = await AnalysisReport.countDocuments();
+  try {
+    // Get total products analyzed
+    const totalProducts = await AnalysisReport.countDocuments();
 
-        // Get unique markets covered
-        const markets = await AnalysisReport.distinct('targetCountry');
-        const marketsCovered = markets.length;
+    // Get unique markets covered
+    const markets = await AnalysisReport.distinct('targetCountry');
+    const marketsCovered = markets.length;
 
-        // Get total ads monitored (sum of all adsData arrays)
-        const reports = await AnalysisReport.find({}, 'adsData');
-        const adsMonitored = reports.reduce((total, report) => total + (report.adsData?.length || 0), 0);
+    // Get total ads monitored (sum of all adsData arrays)
+    const reports = await AnalysisReport.find({}, 'adsData');
+    const adsMonitored = reports.reduce((total, report) => total + (report.adsData?.length || 0), 0);
 
-        // Generate accuracy rate (random between 85-100%)
-        const accuracyRate = Math.floor(Math.random() * 16) + 85; // 85-100
+    // Generate accuracy rate (random between 85-100%)
+    const accuracyRate = Math.floor(Math.random() * 16) + 85; // 85-100
 
-        res.json({
-            productsAnalyzed: totalProducts,
-            marketsCovered: marketsCovered,
-            adsMonitored: adsMonitored,
-            accuracyRate: accuracyRate
-        });
-    } catch (err) {
-        console.error('Dashboard metrics error:', err);
-        res.status(500).json({ error: 'Failed to fetch dashboard metrics' });
-    }
+    res.json({
+      productsAnalyzed: totalProducts,
+      marketsCovered: marketsCovered,
+      adsMonitored: adsMonitored,
+      accuracyRate: accuracyRate
+    });
+  } catch (err) {
+    console.error('Dashboard metrics error:', err);
+    res.status(500).json({ error: 'Failed to fetch dashboard metrics' });
+  }
 });
 // Start server
 app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`Server running on http://localhost:${process.env.PORT}`);
 });
