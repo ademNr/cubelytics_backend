@@ -49,7 +49,12 @@ const analysisReportSchema = new mongoose.Schema({
 
 const AnalysisReport = mongoose.model('AnalysisReport', analysisReportSchema);
 app.use(express.json());
-app.use(cors());
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: false // Set to true if you need cookies/authentication
+}));
 
 /** --- UTILITY FUNCTIONS --- **/
 
