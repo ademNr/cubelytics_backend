@@ -1,25 +1,37 @@
 const express = require('express');
-const puppeteer = require('puppeteer');
+const chromium = require('@sparticuz/chromium');
+const puppeteer = require('puppeteer-core');
 const axios = require('axios');
 const mongoose = require('mongoose');
 const cors = require('cors');
-require('dotenv').config(); // Add this to load .env variables
+require('dotenv').config();
 
 const app = express();
-const PORT = 4000;
+const PORT = process.env.PORT || 4000;
 
+// Enhanced CORS configuration
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
+}));
 
-// Add this middleware to handle CORS
-// MongoDB Connection using environment variable
+app.use(express.json({ limit: '10mb' }));
+
+// MongoDB Connection with better error handling
 mongoose.connect(process.env.MONGODB_URI, {
-  serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of 10s
-  socketTimeoutMS: 45000, // Close sockets after 45s of inactivity
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+  serverSelectionTimeoutMS: 5000,
+  socketTimeoutMS: 45000,
 })
-  .then(() => console.log('MongoDB connected'))
+  .then(() => console.log('✅ MongoDB connected'))
   .catch(err => {
-    console.error('MongoDB connection error:', err);
-    process.exit(1); // Exit process on connection failure
+    console.error('❌ MongoDB connection error:', err);
+    process.exit(1);
   });
+
 // Analysis Report Schema
 const analysisReportSchema = new mongoose.Schema({
   productTitle: { type: String, required: true },
@@ -51,13 +63,6 @@ const analysisReportSchema = new mongoose.Schema({
 });
 
 const AnalysisReport = mongoose.model('AnalysisReport', analysisReportSchema);
-app.use(express.json());
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: false // Set to true if you need cookies/authentication
-}));
 
 /** --- UTILITY FUNCTIONS --- **/
 
@@ -262,44 +267,61 @@ async function callGemini({ prompt }) {
   try {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${process.env.GEMINI_MODEL}:generateContent?key=${process.env.GEMINI_API_KEY}`;
     const contents = [{ parts: [{ text: prompt }] }];
-    const response = await axios.post(url, { contents });
+
+    const response = await axios.post(url, { contents }, {
+      timeout: 50000 // 50s timeout
+    });
+
     return response.data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
   } catch (err) {
     console.error('❌ Gemini API error:', err.response?.data || err.message);
     return null;
   }
 }
-
 async function scrapeFacebookAds(keyword, country) {
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-blink-features=AutomationControlled',
-    ],
-  });
-
-  const page = await browser.newPage();
-  await page.setUserAgent(
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36'
-  );
-
-  await page.evaluateOnNewDocument(() => {
-    Object.defineProperty(navigator, 'webdriver', { get: () => false });
-  });
-
-  const url = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=${country}&q=${encodeURIComponent(keyword)}&sort_data[direction]=desc&sort_data[mode]=relevancy_monthly_grouped`;
+  let browser = null;
 
   try {
-    // Add retry logic
+    // Get executable path based on environment
+    let executablePath;
+
+    if (process.env.VERCEL_ENV) {
+      // Running on Vercel - use Chromium binary
+      executablePath = await chromium.executablePath();
+    } else {
+      // Running locally - use system Chrome or downloaded Chromium
+      executablePath = process.env.CHROME_EXECUTABLE_PATH ||
+        (process.platform === 'win32'
+          ? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+          : process.platform === 'darwin'
+            ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+            : '/usr/bin/google-chrome');
+    }
+
+    const launchOptions = {
+      args: chromium.args,
+      executablePath,
+      headless: true,
+      ignoreHTTPSErrors: true,
+    };
+
+    browser = await puppeteer.launch(launchOptions);
+
+    const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36');
+    await page.setJavaScriptEnabled(true);
+
+    const url = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=${country}&q=${encodeURIComponent(keyword)}`;
+
+    // Navigation with retries
     let retries = 3;
     while (retries > 0) {
       try {
         await page.goto(url, {
-          waitUntil: 'networkidle2',
-          timeout: 60000
+          waitUntil: 'domcontentloaded',
+          timeout: 40000
         });
+        await page.waitForSelector('.x1plvlek', { timeout: 10000 });
         break;
       } catch (err) {
         retries--;
@@ -308,22 +330,29 @@ async function scrapeFacebookAds(keyword, country) {
       }
     }
 
-    const cookieBtn = await page.$('button[data-cookiebanner="accept_button"]');
-    if (cookieBtn) {
-      await cookieBtn.click();
-      await page.waitForTimeout(2000);
+    // Handle cookie banner
+    try {
+      const cookieBtn = await page.$('button[data-cookiebanner="accept_button"]');
+      if (cookieBtn) {
+        await cookieBtn.click();
+        await page.waitForTimeout(1000);
+      }
+    } catch (cookieErr) {
+      console.log('Cookie banner not found or could not be clicked');
     }
 
-    await page.waitForSelector('.x1plvlek.xryxfnj.x1gzqxud.x178xt8z.x1lun4ml', { timeout: 30000 });
+    // Wait for ads to load
+    await page.waitForSelector('.x1plvlek', { timeout: 15000 });
 
     const ads = await page.evaluate(() => {
-      const cards = Array.from(document.querySelectorAll('.x1plvlek.xryxfnj.x1gzqxud.x178xt8z.x1lun4ml'));
+      const cards = Array.from(document.querySelectorAll('.x1plvlek'));
       return cards.slice(0, 10).map(card => {
         const advertiser = card.querySelector('.x8t9es0.x1fvot60.xxio538.x108nfp6.xq9mrsl.x1h4wwuj.x117nqv4.xeuugli')?.innerText || "Unknown";
         let adPreviewText = card.querySelector('.x8t9es0.xw23nyj.xo1l8bm.x63nzvj.x108nfp6.xq9mrsl.x1h4wwuj.xeuugli span')?.innerText || null;
 
         const video = card.querySelector('video');
         const image = card.querySelector('img')?.src || null;
+
         return {
           advertiser,
           adPreviewText,
@@ -334,18 +363,19 @@ async function scrapeFacebookAds(keyword, country) {
       });
     });
 
-    await browser.close();
     return ads;
   } catch (err) {
-    await browser.close();
-    console.error('❌ Puppeteer error:', err);
-    return [];
+    console.error('❌ Puppeteer error:', err.message);
+    return []; // Return empty array instead of failing
+  } finally {
+    if (browser) {
+      await browser.close();
+    }
   }
 }
 
-/** --- MAIN ROUTE --- **/
+/** --- API ROUTES --- **/
 
-// API Routes
 app.post('/api/analyze', async (req, res) => {
   const { productTitle, targetCountry, keywords, imageUrl } = req.body;
 
@@ -354,12 +384,14 @@ app.post('/api/analyze', async (req, res) => {
   }
 
   try {
-    // Your existing analysis logic here
     const prompt = buildPrompt({ productTitle, targetCountry, keywords, imageUrl });
-    const aiResponse = await callGemini({ prompt });
+    const [aiResponse, adResults] = await Promise.all([
+      callGemini({ prompt }),
+      scrapeFacebookAds(productTitle, targetCountry)
+    ]);
+
     const jsonMatch = aiResponse?.match(/\{[\s\S]*\}/);
     const parsedAI = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
-    const adResults = await scrapeFacebookAds(productTitle, targetCountry);
 
     // Save to MongoDB
     const newReport = new AnalysisReport({
@@ -380,8 +412,11 @@ app.post('/api/analyze', async (req, res) => {
       aiAnalysis: parsedAI
     });
   } catch (err) {
-    console.error('Analysis error:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('🚨 Analysis error:', err.message);
+    res.status(500).json({
+      error: 'Internal server error',
+      details: err.message
+    });
   }
 });
 
@@ -397,8 +432,8 @@ app.get('/api/history', async (req, res) => {
       product: report.productTitle,
       country: report.targetCountry,
       date: report.createdAt.toISOString().split('T')[0],
-      status: report.aiAnalysis.finalVerdict.launchDecision,
-      confidence: report.aiAnalysis.finalVerdict.confidenceLevel
+      status: report.aiAnalysis?.finalVerdict?.launchDecision || 'N/A',
+      confidence: report.aiAnalysis?.finalVerdict?.confidenceLevel || 'N/A'
     }));
 
     res.json(formattedReports);
@@ -427,7 +462,7 @@ app.get('/api/history/:id', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch report' });
   }
 });
-// Add this to your server.js file
+
 app.get('/api/dashboard-metrics', async (req, res) => {
   try {
     // Get total products analyzed
@@ -455,7 +490,21 @@ app.get('/api/dashboard-metrics', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch dashboard metrics' });
   }
 });
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    mongo: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+  });
+});
+
+// Root endpoint
+app.get('/', (req, res) => {
+  res.send('Cubelytics Backend API');
+});
+
 // Start server
 app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${process.env.PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
