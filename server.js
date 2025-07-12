@@ -12,11 +12,14 @@ const PORT = 4000;
 // Add this middleware to handle CORS
 // MongoDB Connection using environment variable
 mongoose.connect(process.env.MONGODB_URI, {
-
-  useUnifiedTopology: true
+  serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of 10s
+  socketTimeoutMS: 45000, // Close sockets after 45s of inactivity
 })
   .then(() => console.log('MongoDB connected'))
-  .catch(err => console.error('MongoDB connection error:', err));
+  .catch(err => {
+    console.error('MongoDB connection error:', err);
+    process.exit(1); // Exit process on connection failure
+  });
 // Analysis Report Schema
 const analysisReportSchema = new mongoose.Schema({
   productTitle: { type: String, required: true },
@@ -289,7 +292,21 @@ async function scrapeFacebookAds(keyword, country) {
   const url = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=${country}&q=${encodeURIComponent(keyword)}&sort_data[direction]=desc&sort_data[mode]=relevancy_monthly_grouped`;
 
   try {
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    // Add retry logic
+    let retries = 3;
+    while (retries > 0) {
+      try {
+        await page.goto(url, {
+          waitUntil: 'networkidle2',
+          timeout: 60000
+        });
+        break;
+      } catch (err) {
+        retries--;
+        if (retries === 0) throw err;
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
 
     const cookieBtn = await page.$('button[data-cookiebanner="accept_button"]');
     if (cookieBtn) {
